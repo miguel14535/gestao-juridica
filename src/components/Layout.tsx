@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { Scale, Users, CreditCard, Bell, Calendar, BarChart3, LogOut, Menu, X, Wallet, ReceiptText, RotateCcw, ShieldAlert } from 'lucide-react';
+import { Scale, Users, CreditCard, Bell, Calendar, BarChart3, LogOut, Menu, X, Wallet, ReceiptText } from 'lucide-react';
 import type { AccessMode } from '@/types';
-import { resetDemoData } from '@/lib/supabase';
 
 interface LayoutProps {
   mode: AccessMode;
@@ -31,12 +30,6 @@ export default function Layout({ mode, onLogout, activeTab, onTabChange, childre
 
   return (
     <div className="min-h-screen bg-stone-950 flex flex-col">
-      <div className="bg-amber-900/40 border-b border-amber-600/50 text-amber-200 text-xs sm:text-sm px-3 py-2 text-center flex items-center justify-center flex-wrap gap-2">
-        <ShieldAlert className="w-4 h-4" />
-        <strong>VERSÃO DE TESTES — DADOS FICTÍCIOS</strong>
-        <span className="text-amber-100/75">Nenhum dado é enviado ao Supabase.</span>
-        <button onClick={() => { if (confirm('Apagar somente os dados de teste deste navegador e reiniciar a demonstração?')) resetDemoData(); }} className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-white"><RotateCcw className="w-3.5 h-3.5"/> Reiniciar teste</button>
-      </div>
       {/* Top bar */}
       <header className="bg-stone-900 border-b border-amber-900/30 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
