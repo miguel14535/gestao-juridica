@@ -2,11 +2,14 @@ import { useState, useEffect, useMemo } from 'react';
 import {
   Plus, X, Check, Trash2, Pencil, ChevronLeft, ChevronRight,
   Droplet, Zap, Home, Wifi, Phone, Flame, Building2, ShieldCheck, Repeat, Receipt,
-  CheckCircle2, Circle, AlertTriangle, Wallet, TrendingUp, TrendingDown,
+  CheckCircle2, Circle, AlertTriangle, Wallet, TrendingUp, TrendingDown, Calendar,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import type { FixedExpense, FixedExpensePayment, ExpenseCategory } from '@/types';
-import { EXPENSE_CATEGORY_LABELS, EXPENSE_CATEGORIES } from '@/types';
+import type { FixedExpense, FixedExpensePayment, ExpenseCategory, ExpenseFrequency } from '@/types';
+import {
+  EXPENSE_CATEGORY_LABELS, EXPENSE_CATEGORIES,
+  EXPENSE_FREQUENCY_LABELS, WEEKDAY_LABELS,
+} from '@/types';
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -31,6 +34,39 @@ function monthLabel(month: string) {
   const d = new Date(Date.UTC(y, m - 1, 1));
   const label = d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' });
   return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function currentWeekStr() {
+  const now = new Date();
+  const monday = new Date(now);
+  const day = now.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  monday.setDate(now.getDate() + diff);
+  return monday.toISOString().split('T')[0];
+}
+
+function shiftWeek(weekStart: string, delta: number) {
+  const d = new Date(weekStart);
+  d.setDate(d.getDate() + delta * 7);
+  return d.toISOString().split('T')[0];
+}
+
+function weekLabel(weekStart: string) {
+  const start = new Date(weekStart);
+  const end = new Date(weekStart);
+  end.setDate(end.getDate() + 6);
+  const fmt = (d: Date) => d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  return `${fmt(start)} – ${fmt(end)}`;
+}
+
+function weekdaysInWeek(weekStart: string) {
+  const days: string[] = [];
+  const d = new Date(weekStart);
+  for (let i = 0; i < 7; i++) {
+    days.push(d.toISOString().split('T')[0]);
+    d.setDate(d.getDate() + 1);
+  }
+  return days;
 }
 
 const CATEGORY_ICONS: Record<ExpenseCategory, typeof Droplet> = {
@@ -63,6 +99,7 @@ const emptyForm = {
   name: '',
   category: 'outro' as ExpenseCategory,
   amount: '',
+  frequency: 'monthly' as ExpenseFrequency,
   due_day: '10',
   notes: '',
 };
@@ -72,6 +109,7 @@ export default function FixedExpenses() {
   const [payments, setPayments] = useState<FixedExpensePayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState(currentMonthStr());
+  const [weekStart, setWeekStart] = useState(currentWeekStr());
 
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<FixedExpense | null>(null);
@@ -95,36 +133,55 @@ export default function FixedExpenses() {
       supabase.from('fixed_expenses').select('*').order('due_day'),
       supabase.from('fixed_expense_payments').select('*'),
     ]);
-    if (exp) setExpenses(exp);
-    if (pay) setPayments(pay);
+    if (exp) setExpenses((exp as FixedExpense[]).map(e => ({ ...e, frequency: e.frequency ?? 'monthly' })));
+    if (pay) setPayments(pay as FixedExpensePayment[]);
     setLoading(false);
   }
 
-  function paymentFor(expenseId: string, m: string) {
-    return payments.find(p => p.fixed_expense_id === expenseId && p.month === m) || null;
+  function paymentFor(expenseId: string, periodKey: string) {
+    return payments.find(p => p.fixed_expense_id === expenseId && p.month === periodKey) || null;
   }
 
   const isCurrentMonth = month === currentMonthStr();
+  const isCurrentWeek = weekStart === currentWeekStr();
   const todayDay = new Date().getUTCDate();
 
-  const rows = useMemo(() => {
+  // Monthly rows
+  const monthlyRows = useMemo(() => {
     return expenses
-      .filter(e => e.active)
+      .filter(e => e.active && e.frequency === 'monthly')
       .map(e => {
         const payment = paymentFor(e.id, month);
         const isPaid = payment?.paid ?? false;
         const dueAmount = payment?.amount ?? e.amount;
         const overdue = !isPaid && isCurrentMonth && todayDay > e.due_day;
-        return { expense: e, payment, isPaid, dueAmount, overdue };
+        return { expense: e, payment, isPaid, dueAmount, overdue, periodKey: month };
       })
       .sort((a, b) => a.expense.due_day - b.expense.due_day);
   }, [expenses, payments, month]);
 
-  const totalFixed = rows.reduce((s, r) => s + r.dueAmount, 0);
-  const totalPaid = rows.filter(r => r.isPaid).reduce((s, r) => s + r.dueAmount, 0);
+  // Weekly rows — group by weekday
+  const weeklyRows = useMemo(() => {
+    const weekDays = weekdaysInWeek(weekStart);
+    return expenses
+      .filter(e => e.active && e.frequency === 'weekly')
+      .map(e => {
+        const dueDate = weekDays[(e.due_day + 6) % 7];
+        const payment = paymentFor(e.id, dueDate);
+        const isPaid = payment?.paid ?? false;
+        const dueAmount = payment?.amount ?? e.amount;
+        const overdue = !isPaid && isCurrentWeek && todayStr() > dueDate;
+        return { expense: e, payment, isPaid, dueAmount, overdue, periodKey: dueDate, dueDate };
+      })
+      .sort((a, b) => a.expense.due_day - b.expense.due_day);
+  }, [expenses, payments, weekStart]);
+
+  const allRows = [...monthlyRows, ...weeklyRows];
+  const totalFixed = allRows.reduce((s, r) => s + r.dueAmount, 0);
+  const totalPaid = allRows.filter(r => r.isPaid).reduce((s, r) => s + r.dueAmount, 0);
   const totalPending = totalFixed - totalPaid;
-  const paidCount = rows.filter(r => r.isPaid).length;
-  const pctPaid = rows.length > 0 ? (paidCount / rows.length) * 100 : 0;
+  const paidCount = allRows.filter(r => r.isPaid).length;
+  const pctPaid = allRows.length > 0 ? (paidCount / allRows.length) * 100 : 0;
 
   function resetForm() {
     setForm(emptyForm);
@@ -143,6 +200,7 @@ export default function FixedExpenses() {
       name: expense.name,
       category: expense.category,
       amount: String(expense.amount),
+      frequency: expense.frequency,
       due_day: String(expense.due_day),
       notes: expense.notes || '',
     });
@@ -156,7 +214,12 @@ export default function FixedExpenses() {
     const amount = Number(form.amount);
     if (!form.amount || isNaN(amount) || amount <= 0) { setError('Informe um valor válido.'); return; }
     const dueDay = parseInt(form.due_day, 10);
-    if (isNaN(dueDay) || dueDay < 1 || dueDay > 31) { setError('Dia de vencimento deve ser entre 1 e 31.'); return; }
+    if (form.frequency === 'monthly' && (isNaN(dueDay) || dueDay < 1 || dueDay > 31)) {
+      setError('Dia do vencimento deve ser entre 1 e 31.'); return;
+    }
+    if (form.frequency === 'weekly' && (isNaN(dueDay) || dueDay < 0 || dueDay > 6)) {
+      setError('Selecione um dia da semana.'); return;
+    }
 
     setSaving(true);
     setError('');
@@ -165,18 +228,21 @@ export default function FixedExpenses() {
       name: form.name.trim(),
       category: form.category,
       amount,
+      frequency: form.frequency,
       due_day: dueDay,
       notes: form.notes.trim() || null,
       active: true,
     };
 
-    if (editing) {
-      await supabase.from('fixed_expenses').update(payload).eq('id', editing.id);
-    } else {
-      await supabase.from('fixed_expenses').insert(payload);
-    }
+    const result = editing
+      ? await supabase.from('fixed_expenses').update(payload).eq('id', editing.id)
+      : await supabase.from('fixed_expenses').insert(payload);
 
     setSaving(false);
+    if (result.error) {
+      setError('Não foi possível salvar. Verifique se o banco de dados foi atualizado.');
+      return;
+    }
     setShowForm(false);
     resetForm();
     loadData();
@@ -188,45 +254,55 @@ export default function FixedExpenses() {
     loadData();
   }
 
-  function openPay(expense: FixedExpense) {
-    const payment = paymentFor(expense.id, month);
+  function openPay(expense: FixedExpense, periodKey: string) {
+    const payment = paymentFor(expense.id, periodKey);
     setPayTarget(expense);
     setPayAmount(String(payment?.amount ?? expense.amount));
-    setPayDate(payment?.paid_date || todayStr());
+    setPayDate(payment?.paid_date || (expense.frequency === 'weekly' ? periodKey : todayStr()));
   }
 
-  async function confirmPay() {
+  async function confirmPay(periodKey: string) {
     if (!payTarget) return;
     const amount = Number(payAmount);
     if (!payAmount || isNaN(amount) || amount <= 0) return;
 
-    const existing = paymentFor(payTarget.id, month);
+    const existing = paymentFor(payTarget.id, periodKey);
     if (existing) {
       await supabase.from('fixed_expense_payments').update({
         paid: true, paid_date: payDate, amount,
       }).eq('id', existing.id);
     } else {
       await supabase.from('fixed_expense_payments').insert({
-        fixed_expense_id: payTarget.id, month, amount, paid: true, paid_date: payDate,
+        fixed_expense_id: payTarget.id, month: periodKey, amount, paid: true, paid_date: payDate,
       });
     }
     setPayTarget(null);
     loadData();
   }
 
-  async function unmarkPaid(expense: FixedExpense) {
-    const existing = paymentFor(expense.id, month);
+  async function unmarkPaid(expense: FixedExpense, periodKey: string) {
+    const existing = paymentFor(expense.id, periodKey);
     if (!existing) return;
     await supabase.from('fixed_expense_payments').update({ paid: false, paid_date: null }).eq('id', existing.id);
     loadData();
+  }
+
+  function dueDayLabel(expense: FixedExpense) {
+    if (expense.frequency === 'weekly') return WEEKDAY_LABELS[expense.due_day];
+    return `Dia ${expense.due_day}`;
+  }
+
+  function periodLabel(expense: FixedExpense) {
+    if (expense.frequency === 'weekly') return weekLabel(weekStart);
+    return monthLabel(month);
   }
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-amber-100">Gastos Fixos Mensais</h1>
-          <p className="text-stone-400 text-sm mt-0.5">Água, luz, aluguel e outras contas recorrentes</p>
+          <h1 className="text-2xl font-bold text-amber-100">Gastos Fixos</h1>
+          <p className="text-stone-400 text-sm mt-0.5">Contas recorrentes mensais e semanais</p>
         </div>
         <button
           onClick={openNew}
@@ -235,33 +311,6 @@ export default function FixedExpenses() {
           <Plus className="w-4 h-4" />
           Nova Conta Fixa
         </button>
-      </div>
-
-      {/* Month switcher */}
-      <div className="flex items-center justify-center gap-4 bg-stone-900 border border-stone-800 rounded-xl px-4 py-3">
-        <button
-          onClick={() => setMonth(m => shiftMonth(m, -1))}
-          className="p-2 rounded-lg text-stone-400 hover:text-amber-300 hover:bg-stone-800 transition-colors"
-        >
-          <ChevronLeft className="w-5 h-5" />
-        </button>
-        <span className="text-amber-100 font-semibold text-sm sm:text-base min-w-[160px] text-center capitalize">
-          {monthLabel(month)}
-        </span>
-        <button
-          onClick={() => setMonth(m => shiftMonth(m, 1))}
-          className="p-2 rounded-lg text-stone-400 hover:text-amber-300 hover:bg-stone-800 transition-colors"
-        >
-          <ChevronRight className="w-5 h-5" />
-        </button>
-        {month !== currentMonthStr() && (
-          <button
-            onClick={() => setMonth(currentMonthStr())}
-            className="ml-2 text-xs text-stone-500 hover:text-amber-400 underline transition-colors"
-          >
-            Hoje
-          </button>
-        )}
       </div>
 
       {loading ? (
@@ -275,7 +324,7 @@ export default function FixedExpenses() {
             <div className="bg-stone-900 border border-stone-800 rounded-xl p-4">
               <div className="flex items-center gap-2 mb-2">
                 <Wallet className="w-4 h-4 text-stone-500" />
-                <span className="text-stone-400 text-xs">Total Fixo do Mês</span>
+                <span className="text-stone-400 text-xs">Total do Período</span>
               </div>
               <p className="text-amber-200 font-bold text-xl">{formatCurrency(totalFixed)}</p>
             </div>
@@ -298,15 +347,15 @@ export default function FixedExpenses() {
                 <CheckCircle2 className="w-4 h-4 text-stone-500" />
                 <span className="text-stone-400 text-xs">Contas Quitadas</span>
               </div>
-              <p className="text-amber-200 font-bold text-xl">{paidCount}/{rows.length}</p>
+              <p className="text-amber-200 font-bold text-xl">{paidCount}/{allRows.length}</p>
             </div>
           </div>
 
           {/* Progress bar */}
-          {rows.length > 0 && (
+          {allRows.length > 0 && (
             <div className="bg-stone-900 border border-stone-800 rounded-xl p-5">
               <div className="flex items-center justify-between mb-3">
-                <span className="text-stone-400 text-sm">Progresso do mês</span>
+                <span className="text-stone-400 text-sm">Progresso do período</span>
                 <span className="text-amber-300 font-semibold text-sm">{pctPaid.toFixed(0)}%</span>
               </div>
               <div className="h-2.5 bg-stone-800 rounded-full overflow-hidden">
@@ -318,86 +367,231 @@ export default function FixedExpenses() {
             </div>
           )}
 
-          {/* Expenses list */}
-          {rows.length === 0 ? (
+          {/* Monthly section */}
+          {monthlyRows.length > 0 && (
+            <>
+              <div className="flex items-center justify-center gap-4 bg-stone-900 border border-stone-800 rounded-xl px-4 py-3">
+                <button
+                  onClick={() => setMonth(m => shiftMonth(m, -1))}
+                  className="p-2 rounded-lg text-stone-400 hover:text-amber-300 hover:bg-stone-800 transition-colors"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                <span className="text-amber-100 font-semibold text-sm sm:text-base min-w-[160px] text-center capitalize">
+                  {monthLabel(month)}
+                </span>
+                <button
+                  onClick={() => setMonth(m => shiftMonth(m, 1))}
+                  className="p-2 rounded-lg text-stone-400 hover:text-amber-300 hover:bg-stone-800 transition-colors"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+                {month !== currentMonthStr() && (
+                  <button
+                    onClick={() => setMonth(currentMonthStr())}
+                    className="ml-2 text-xs text-stone-500 hover:text-amber-400 underline transition-colors"
+                  >
+                    Hoje
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 px-1">
+                <Calendar className="w-4 h-4 text-amber-600" />
+                <h2 className="text-amber-200 font-semibold text-sm">Contas Mensais</h2>
+              </div>
+
+              <div className="bg-stone-900 border border-stone-800 rounded-xl overflow-hidden">
+                <div className="divide-y divide-stone-800/50">
+                  {monthlyRows.map(({ expense, isPaid, dueAmount, overdue, periodKey }) => {
+                    const Icon = CATEGORY_ICONS[expense.category];
+                    const colors = CATEGORY_COLORS[expense.category];
+                    return (
+                      <div
+                        key={expense.id}
+                        className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-4 hover:bg-stone-800/30 transition-colors"
+                      >
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className={`w-10 h-10 rounded-full ${colors.bg} border ${colors.border} flex items-center justify-center shrink-0`}>
+                            <Icon className={`w-5 h-5 ${colors.text}`} />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-stone-200 text-sm font-medium truncate">{expense.name}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${colors.bg} ${colors.text}`}>
+                                {EXPENSE_CATEGORY_LABELS[expense.category]}
+                              </span>
+                              <span className="text-stone-500 text-xs">{dueDayLabel(expense)}</span>
+                              {overdue && (
+                                <span className="flex items-center gap-1 text-red-400 text-xs">
+                                  <AlertTriangle className="w-3 h-3" /> Atrasado
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 sm:gap-4 justify-between sm:justify-end">
+                          <div className="text-right">
+                            <p className={`font-semibold text-sm ${isPaid ? 'text-green-400' : overdue ? 'text-red-400' : 'text-stone-200'}`}>
+                              {formatCurrency(dueAmount)}
+                            </p>
+                          </div>
+
+                          <button
+                            onClick={() => (isPaid ? unmarkPaid(expense, periodKey) : openPay(expense, periodKey))}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                              isPaid
+                                ? 'bg-green-700/20 border-green-700/40 text-green-400 hover:bg-green-700/30'
+                                : 'border-stone-700 text-stone-400 hover:border-amber-600 hover:text-amber-300'
+                            }`}
+                          >
+                            {isPaid ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Circle className="w-3.5 h-3.5" />}
+                            {isPaid ? 'Pago' : 'Marcar pago'}
+                          </button>
+
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => openEdit(expense)}
+                              className="p-1.5 rounded-lg text-stone-500 hover:text-amber-300 hover:bg-stone-800 transition-colors"
+                              title="Editar"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setConfirmDelete(expense)}
+                              className="p-1.5 rounded-lg text-stone-500 hover:text-red-400 hover:bg-stone-800 transition-colors"
+                              title="Excluir"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Weekly section */}
+          {weeklyRows.length > 0 && (
+            <>
+              <div className="flex items-center justify-center gap-4 bg-stone-900 border border-stone-800 rounded-xl px-4 py-3">
+                <button
+                  onClick={() => setWeekStart(w => shiftWeek(w, -1))}
+                  className="p-2 rounded-lg text-stone-400 hover:text-amber-300 hover:bg-stone-800 transition-colors"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                <span className="text-amber-100 font-semibold text-sm sm:text-base min-w-[180px] text-center">
+                  {weekLabel(weekStart)}
+                </span>
+                <button
+                  onClick={() => setWeekStart(w => shiftWeek(w, 1))}
+                  className="p-2 rounded-lg text-stone-400 hover:text-amber-300 hover:bg-stone-800 transition-colors"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+                {weekStart !== currentWeekStr() && (
+                  <button
+                    onClick={() => setWeekStart(currentWeekStr())}
+                    className="ml-2 text-xs text-stone-500 hover:text-amber-400 underline transition-colors"
+                  >
+                    Hoje
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 px-1">
+                <Repeat className="w-4 h-4 text-amber-600" />
+                <h2 className="text-amber-200 font-semibold text-sm">Contas Semanais</h2>
+              </div>
+
+              <div className="bg-stone-900 border border-stone-800 rounded-xl overflow-hidden">
+                <div className="divide-y divide-stone-800/50">
+                  {weeklyRows.map(({ expense, isPaid, dueAmount, overdue, periodKey, dueDate }) => {
+                    const Icon = CATEGORY_ICONS[expense.category];
+                    const colors = CATEGORY_COLORS[expense.category];
+                    return (
+                      <div
+                        key={expense.id}
+                        className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-4 hover:bg-stone-800/30 transition-colors"
+                      >
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className={`w-10 h-10 rounded-full ${colors.bg} border ${colors.border} flex items-center justify-center shrink-0`}>
+                            <Icon className={`w-5 h-5 ${colors.text}`} />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-stone-200 text-sm font-medium truncate">{expense.name}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${colors.bg} ${colors.text}`}>
+                                {EXPENSE_CATEGORY_LABELS[expense.category]}
+                              </span>
+                              <span className="text-stone-500 text-xs">
+                                {WEEKDAY_LABELS[expense.due_day]}
+                              </span>
+                              {overdue && (
+                                <span className="flex items-center gap-1 text-red-400 text-xs">
+                                  <AlertTriangle className="w-3 h-3" /> Atrasado
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 sm:gap-4 justify-between sm:justify-end">
+                          <div className="text-right">
+                            <p className={`font-semibold text-sm ${isPaid ? 'text-green-400' : overdue ? 'text-red-400' : 'text-stone-200'}`}>
+                              {formatCurrency(dueAmount)}
+                            </p>
+                          </div>
+
+                          <button
+                            onClick={() => (isPaid ? unmarkPaid(expense, periodKey) : openPay(expense, periodKey))}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                              isPaid
+                                ? 'bg-green-700/20 border-green-700/40 text-green-400 hover:bg-green-700/30'
+                                : 'border-stone-700 text-stone-400 hover:border-amber-600 hover:text-amber-300'
+                            }`}
+                          >
+                            {isPaid ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Circle className="w-3.5 h-3.5" />}
+                            {isPaid ? 'Pago' : 'Marcar pago'}
+                          </button>
+
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => openEdit(expense)}
+                              className="p-1.5 rounded-lg text-stone-500 hover:text-amber-300 hover:bg-stone-800 transition-colors"
+                              title="Editar"
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setConfirmDelete(expense)}
+                              className="p-1.5 rounded-lg text-stone-500 hover:text-red-400 hover:bg-stone-800 transition-colors"
+                              title="Excluir"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+
+          {allRows.length === 0 && (
             <div className="text-center py-16">
               <Receipt className="w-10 h-10 text-stone-700 mx-auto mb-3" />
               <p className="text-stone-400">Nenhuma conta fixa cadastrada ainda.</p>
               <button onClick={openNew} className="mt-4 text-amber-400 hover:text-amber-300 text-sm font-medium transition-colors">
                 Cadastrar a primeira conta
               </button>
-            </div>
-          ) : (
-            <div className="bg-stone-900 border border-stone-800 rounded-xl overflow-hidden">
-              <div className="divide-y divide-stone-800/50">
-                {rows.map(({ expense, isPaid, dueAmount, overdue }) => {
-                  const Icon = CATEGORY_ICONS[expense.category];
-                  const colors = CATEGORY_COLORS[expense.category];
-                  return (
-                    <div
-                      key={expense.id}
-                      className="flex flex-col sm:flex-row sm:items-center gap-3 px-5 py-4 hover:bg-stone-800/30 transition-colors"
-                    >
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <div className={`w-10 h-10 rounded-full ${colors.bg} border ${colors.border} flex items-center justify-center shrink-0`}>
-                          <Icon className={`w-5 h-5 ${colors.text}`} />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-stone-200 text-sm font-medium truncate">{expense.name}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className={`text-xs px-1.5 py-0.5 rounded ${colors.bg} ${colors.text}`}>
-                              {EXPENSE_CATEGORY_LABELS[expense.category]}
-                            </span>
-                            <span className="text-stone-500 text-xs">Vence dia {expense.due_day}</span>
-                            {overdue && (
-                              <span className="flex items-center gap-1 text-red-400 text-xs">
-                                <AlertTriangle className="w-3 h-3" /> Atrasado
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3 sm:gap-4 justify-between sm:justify-end">
-                        <div className="text-right">
-                          <p className={`font-semibold text-sm ${isPaid ? 'text-green-400' : overdue ? 'text-red-400' : 'text-stone-200'}`}>
-                            {formatCurrency(dueAmount)}
-                          </p>
-                        </div>
-
-                        <button
-                          onClick={() => (isPaid ? unmarkPaid(expense) : openPay(expense))}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                            isPaid
-                              ? 'bg-green-700/20 border-green-700/40 text-green-400 hover:bg-green-700/30'
-                              : 'border-stone-700 text-stone-400 hover:border-amber-600 hover:text-amber-300'
-                          }`}
-                        >
-                          {isPaid ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Circle className="w-3.5 h-3.5" />}
-                          {isPaid ? 'Pago' : 'Marcar pago'}
-                        </button>
-
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => openEdit(expense)}
-                            className="p-1.5 rounded-lg text-stone-500 hover:text-amber-300 hover:bg-stone-800 transition-colors"
-                            title="Editar"
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => setConfirmDelete(expense)}
-                            className="p-1.5 rounded-lg text-stone-500 hover:text-red-400 hover:bg-stone-800 transition-colors"
-                            title="Excluir"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
             </div>
           )}
         </>
@@ -451,6 +645,35 @@ export default function FixedExpenses() {
                 </div>
               </div>
 
+              {/* Frequency selector */}
+              <div>
+                <label className="text-stone-400 text-sm mb-1.5 block">Frequência</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {(Object.keys(EXPENSE_FREQUENCY_LABELS) as ExpenseFrequency[]).map(freq => {
+                    const active = form.frequency === freq;
+                    return (
+                      <button
+                        key={freq}
+                        type="button"
+                        onClick={() => setForm(f => ({
+                          ...f,
+                          frequency: freq,
+                          due_day: freq === 'weekly' ? '1' : '10',
+                        }))}
+                        className={`flex items-center justify-center gap-2 py-2.5 rounded-lg border text-sm font-medium transition-all ${
+                          active
+                            ? 'bg-amber-700/30 border-amber-700/40 text-amber-300'
+                            : 'border-stone-700 text-stone-400 hover:border-stone-600'
+                        }`}
+                      >
+                        {freq === 'monthly' ? <Calendar className="w-4 h-4" /> : <Repeat className="w-4 h-4" />}
+                        {EXPENSE_FREQUENCY_LABELS[freq]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-stone-400 text-sm mb-1.5 block">Valor *</label>
@@ -465,15 +688,29 @@ export default function FixedExpenses() {
                   />
                 </div>
                 <div>
-                  <label className="text-stone-400 text-sm mb-1.5 block">Dia do Vencimento</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="31"
-                    value={form.due_day}
-                    onChange={e => setForm(f => ({ ...f, due_day: e.target.value }))}
-                    className="w-full bg-stone-800 border border-stone-700 focus:border-amber-600 rounded-lg px-4 py-2.5 text-stone-200 outline-none transition-colors text-sm"
-                  />
+                  <label className="text-stone-400 text-sm mb-1.5 block">
+                    {form.frequency === 'weekly' ? 'Dia da Semana' : 'Dia do Vencimento'}
+                  </label>
+                  {form.frequency === 'weekly' ? (
+                    <select
+                      value={form.due_day}
+                      onChange={e => setForm(f => ({ ...f, due_day: e.target.value }))}
+                      className="w-full bg-stone-800 border border-stone-700 focus:border-amber-600 rounded-lg px-4 py-2.5 text-stone-200 outline-none transition-colors text-sm"
+                    >
+                      {WEEKDAY_LABELS.map((label, idx) => (
+                        <option key={idx} value={idx}>{label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="number"
+                      min="1"
+                      max="31"
+                      value={form.due_day}
+                      onChange={e => setForm(f => ({ ...f, due_day: e.target.value }))}
+                      className="w-full bg-stone-800 border border-stone-700 focus:border-amber-600 rounded-lg px-4 py-2.5 text-stone-200 outline-none transition-colors text-sm"
+                    />
+                  )}
                 </div>
               </div>
 
@@ -513,7 +750,7 @@ export default function FixedExpenses() {
             </div>
             <div className="p-6 space-y-4">
               <p className="text-stone-300 text-sm">
-                <span className="font-medium">{payTarget.name}</span> — {monthLabel(month)}
+                <span className="font-medium">{payTarget.name}</span> — {periodLabel(payTarget)}
               </p>
               <div>
                 <label className="text-stone-400 text-sm mb-1.5 block">Valor Pago</label>
@@ -538,7 +775,12 @@ export default function FixedExpenses() {
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setPayTarget(null)} className="flex-1 py-2.5 rounded-lg border border-stone-700 text-stone-400 text-sm transition-colors hover:border-stone-600">Cancelar</button>
-                <button onClick={confirmPay} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg bg-green-700 hover:bg-green-600 text-green-50 font-medium text-sm transition-colors">
+                <button
+                  onClick={() => confirmPay(payTarget.frequency === 'weekly'
+                    ? weekdaysInWeek(weekStart)[(payTarget.due_day + 6) % 7]
+                    : month)}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg bg-green-700 hover:bg-green-600 text-green-50 font-medium text-sm transition-colors"
+                >
                   <Check className="w-4 h-4" />
                   Confirmar
                 </button>

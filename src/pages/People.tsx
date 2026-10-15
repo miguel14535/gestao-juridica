@@ -62,7 +62,10 @@ export default function People() {
       ({ error: err } = await supabase.from('people').insert(payload));
     }
     setSaving(false);
-    if (err) { setError('Erro ao salvar. Tente novamente.'); return; }
+    if (err) {
+      setError(err.message || 'Não foi possível salvar. Tente novamente.');
+      return;
+    }
     setShowForm(false);
     loadPeople();
   }

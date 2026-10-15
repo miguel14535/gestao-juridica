@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react';
-import { Scale, Users, CreditCard, Bell, Calendar, BarChart3, LogOut, Menu, X, Download, Upload, Wallet } from 'lucide-react';
+import { useState } from 'react';
+import { Scale, Users, CreditCard, Bell, Calendar, BarChart3, LogOut, Menu, X, Wallet, ReceiptText, RotateCcw, ShieldAlert } from 'lucide-react';
 import type { AccessMode } from '@/types';
-import { exportDatabase, importDatabase } from '@/lib/localdb';
+import { resetDemoData } from '@/lib/supabase';
 
 interface LayoutProps {
   mode: AccessMode;
@@ -17,6 +17,7 @@ const simpleTabs = [
   { id: 'alerts', label: 'Alertas', icon: Bell },
   { id: 'agenda', label: 'Agenda', icon: Calendar },
   { id: 'expenses', label: 'Gastos Fixos', icon: Wallet },
+  { id: 'variable-expenses', label: 'Gastos Variáveis', icon: ReceiptText },
 ];
 
 const complexTabs = [
@@ -26,42 +27,16 @@ const complexTabs = [
 
 export default function Layout({ mode, onLogout, activeTab, onTabChange, children }: LayoutProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const tabs = mode === 'complex' ? complexTabs : simpleTabs;
-
-  function handleExport() {
-    const json = exportDatabase();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `backup-gestao-juridica-${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function handleImportClick() {
-    fileInputRef.current?.click();
-  }
-
-  function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        importDatabase(reader.result as string);
-        window.location.reload();
-      } catch {
-        alert('Arquivo inválido. Selecione um backup exportado por este app.');
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  }
 
   return (
     <div className="min-h-screen bg-stone-950 flex flex-col">
+      <div className="bg-amber-900/40 border-b border-amber-600/50 text-amber-200 text-xs sm:text-sm px-3 py-2 text-center flex items-center justify-center flex-wrap gap-2">
+        <ShieldAlert className="w-4 h-4" />
+        <strong>VERSÃO DE TESTES — DADOS FICTÍCIOS</strong>
+        <span className="text-amber-100/75">Nenhum dado é enviado ao Supabase.</span>
+        <button onClick={() => { if (confirm('Apagar somente os dados de teste deste navegador e reiniciar a demonstração?')) resetDemoData(); }} className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-white"><RotateCcw className="w-3.5 h-3.5"/> Reiniciar teste</button>
+      </div>
       {/* Top bar */}
       <header className="bg-stone-900 border-b border-amber-900/30 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
@@ -103,23 +78,6 @@ export default function Layout({ mode, onLogout, activeTab, onTabChange, childre
           </nav>
 
           <div className="flex items-center gap-2">
-            <input ref={fileInputRef} type="file" accept="application/json" onChange={handleImportFile} className="hidden" />
-            <button
-              onClick={handleExport}
-              title="Baixar backup dos dados (JSON)"
-              className="hidden md:flex items-center gap-2 px-3 py-2 rounded-lg text-stone-400 hover:text-amber-300 hover:bg-stone-800 text-sm transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              Backup
-            </button>
-            <button
-              onClick={handleImportClick}
-              title="Restaurar um backup (JSON)"
-              className="hidden md:flex items-center gap-2 px-3 py-2 rounded-lg text-stone-400 hover:text-amber-300 hover:bg-stone-800 text-sm transition-colors"
-            >
-              <Upload className="w-4 h-4" />
-              Restaurar
-            </button>
             <button
               onClick={onLogout}
               className="hidden md:flex items-center gap-2 px-3 py-2 rounded-lg text-stone-400 hover:text-amber-300 hover:bg-stone-800 text-sm transition-colors"
@@ -156,20 +114,6 @@ export default function Layout({ mode, onLogout, activeTab, onTabChange, childre
                 </button>
               );
             })}
-            <button
-              onClick={handleExport}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-stone-400 hover:text-amber-300 text-sm transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              Backup
-            </button>
-            <button
-              onClick={handleImportClick}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-stone-400 hover:text-amber-300 text-sm transition-colors"
-            >
-              <Upload className="w-4 h-4" />
-              Restaurar
-            </button>
             <button
               onClick={onLogout}
               className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-stone-400 hover:text-amber-300 text-sm transition-colors"

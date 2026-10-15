@@ -112,11 +112,23 @@ export const EXPENSE_CATEGORIES: ExpenseCategory[] = [
   'agua', 'luz', 'aluguel', 'internet', 'telefone', 'gas', 'condominio', 'seguro', 'assinatura', 'outro',
 ];
 
+export type ExpenseFrequency = 'monthly' | 'weekly';
+
+export const EXPENSE_FREQUENCY_LABELS: Record<ExpenseFrequency, string> = {
+  monthly: 'Mensal',
+  weekly: 'Semanal',
+};
+
+export const WEEKDAY_LABELS = [
+  'Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado',
+];
+
 export interface FixedExpense {
   id: string;
   name: string;
   category: ExpenseCategory;
   amount: number;
+  frequency: ExpenseFrequency;
   due_day: number;
   notes: string | null;
   active: boolean;
@@ -132,4 +144,38 @@ export interface FixedExpensePayment {
   paid_date: string | null;
   created_at: string;
   fixed_expense?: FixedExpense;
+}
+
+export type VariableExpenseCategory =
+  | 'alimentacao'
+  | 'transporte'
+  | 'material'
+  | 'manutencao'
+  | 'impostos'
+  | 'viagem'
+  | 'outro';
+
+export const VARIABLE_EXPENSE_CATEGORY_LABELS: Record<VariableExpenseCategory, string> = {
+  alimentacao: 'Alimentação',
+  transporte: 'Transporte',
+  material: 'Material',
+  manutencao: 'Manutenção',
+  impostos: 'Impostos',
+  viagem: 'Viagem',
+  outro: 'Outro',
+};
+
+export const VARIABLE_EXPENSE_CATEGORIES: VariableExpenseCategory[] = [
+  'alimentacao', 'transporte', 'material', 'manutencao', 'impostos', 'viagem', 'outro',
+];
+
+export interface VariableExpense {
+  id: string;
+  description: string;
+  category: VariableExpenseCategory;
+  amount: number;
+  date: string;
+  payment_method: PaymentMethod | null;
+  notes: string | null;
+  created_at: string;
 }

@@ -109,7 +109,7 @@ export default function Agenda() {
     const [{ data: ppl }, { data: appts }] = await Promise.all([
       supabase.from('people').select('*').order('name'),
       supabase.from('appointments')
-        .select('*, people(*), manager(*)')
+        .select('*, people:people!appointments_person_id_fkey(*), manager:people!appointments_manager_id_fkey(*)')
         .order('appointment_date', { ascending: true })
         .order('appointment_time', { ascending: true }),
     ]);

@@ -7,6 +7,7 @@ import Alerts from '@/pages/Alerts';
 import Agenda from '@/pages/Agenda';
 import Balance from '@/pages/Balance';
 import FixedExpenses from '@/pages/FixedExpense';
+import VariableExpenses from '@/pages/VariableExpenses';
 import type { AccessMode } from '@/types';
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
       case 'alerts': return <Alerts />;
       case 'agenda': return <Agenda />;
       case 'expenses': return <FixedExpenses />;
+      case 'variable-expenses': return <VariableExpenses />;
       case 'balance': return mode === 'complex' ? <Balance /> : null;
       default: return <People />;
     }
